@@ -27,31 +27,29 @@ class Calibration():
         criteria = (cv2.TERM_CRITERIA_EPS+ cv2.TERM_CRITERIA_MAX_ITER,5,0.001)
         
         gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
-        ret, corners = cv2.findChessboardCorners(gray, (7,6), None)             
+        #cv2.imwrite("frame.jpg",gray)
+        ret, corners = cv2.findChessboardCorners(gray, (9,6), None)             
         print(ret)
         if ret == False:
             return
         
         imgp = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1), criteria)
-        objp = np.zeros((6*7,3),np.float32)
-        objp[:,:2] = np.mgrid[0:7,0:6].T.reshape(-1,2)
+        objp = np.zeros((6*9,3),np.float32)
+        objp[:,:2] = np.mgrid[0:9,0:6].T.reshape(-1,2)
         self.imgpoints.append(imgp)
         self.objpoints.append(objp)
         ret,mtx,dist,rvecs,tvecs = cv2.calibrateCamera(self.objpoints,self.imgpoints,gray.shape[::-1],None,None)
         print(mtx)
         
         h,w = frame.shape[:2]
-        self.cameratx, self.roi = cv2.getOptimalNewCameraMatrix(mtx,dist,(w,h),1,(w,h))
-        print(self.cameratx)
-        self.mtx = mtx
-        self.dist = dist
+        cameratx, _ = cv2.getOptimalNewCameraMatrix(mtx,dist,(w,h),0,(w,h))
+        self.mapx, self.mapy = cv2.initUndistortRectifyMap(mtx,dist,None, cameratx,(w,h),5)
+        print(cameratx)
         self.isCalibrate = True
 
     def undistort(self,frame):
         if self.isCalibrate:
-            frame1 = cv2.undistort(frame,self.mtx,self.dist,None,self.cameratx)
-            #x,y,w,h = self.roi
-            #frame = frame1[y:y+h,x:x+w]
+            return cv2.remap(frame,self.mapx,self.mapy,cv2.INTER_LINEAR)
         return frame
     
 class CamGui( QtWidgets.QMainWindow ):
@@ -96,7 +94,7 @@ class CamGui( QtWidgets.QMainWindow ):
             if self.iter == 0:
                 self.count.setText(self.timer)
             self.iter = self.iter + 1
-            if self.iter%100 == 0:
+            if self.iter%50 == 0:
                 self.iter = 0
                 self.timer = self.timer - 1
         if self.timer == 0 and self.iter < 2:

@@ -10,6 +10,7 @@ import RPi.GPIO as gp
 from threading import Thread
 import numpy as np
 from PyQt5 import QtCore
+import time
 
 class Camera(QtCore.QThread):
     
@@ -63,14 +64,13 @@ class Camera(QtCore.QThread):
           gp.output(11, True)
           gp.output(12, False)
       self.cameraid = id
-      time.sleep(0.0001)
 
    def __init__(self):
       super(Camera, self).__init__()
       self.vc = cv2.VideoCapture(0)
       self.vc.set(cv2.CAP_PROP_FRAME_HEIGHT,384)
       self.vc.set(cv2.CAP_PROP_FRAME_WIDTH,384)
-      self.vc.set(cv2.CAP_PROP_FPS, 64)
+      self.vc.set(cv2.CAP_PROP_FPS, 30)
       self.setup(0)
       self.setup(2)
       self.cameraid = 2
@@ -79,12 +79,14 @@ class Camera(QtCore.QThread):
    def run(self):
     while self.runFlag and self.vc.isOpened():
       rval, frame = self.vc.read()
+      rval, frame = self.vc.read()
       if rval== False:
           break
       
       self.grabbed_signal.emit(0, frame)
       self.changeCamera(0)
       
+      rval, frame = self.vc.read()
       rval, frame = self.vc.read()
       if rval== False:
           break

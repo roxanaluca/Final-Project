@@ -10,9 +10,10 @@ i2c = I2C(3)
 #pca = adafruit_pca9685.PCA9685(i2c)
 kit = ServoKit(channels=16, i2c=i2c)
 
-"""kit.continuous_servo[0].throttle = 0.5
+"""kit.continuous_servo[0].throttle = -0.5
 time.sleep(0.125)
 #time.sleep(1)
 kit.continuous_servo[0].throttle = 0
 """
-#kit.servo[2].angle = 45
+#print(kit.servo[1].angle)
+kit.servo[1].angle = 45
