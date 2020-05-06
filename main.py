@@ -15,6 +15,17 @@ with open('gui_ui.py', 'w') as fd:
     uic.compileUi('gui/gui.ui', fd)
 import gui_ui as gui_ui
 
+from adafruit_extended_bus import ExtendedI2C as I2C
+from adafruit_servokit import ServoKit
+
+class MotorDriver():
+    def __init__(self):
+        i2c = I2C(3)
+        kit = ServoKit(channels=16, i2c=i2c)
+        if kit.servo[1].angle < 0 or kit.servo[1].angle > 180:
+            kit.servo[1].angle = 30
+
+
 class Calibration():
     
     def __init__(self):
@@ -76,6 +87,7 @@ class CamGui( QtWidgets.QMainWindow ):
         self.timer = 0
         self.iter = 2
         self.calibration = Calibration()
+        self.motorDriver = MotorDriver()
     
     def startCount(self):
         self.timer = 5
@@ -160,15 +172,21 @@ class CamGui( QtWidgets.QMainWindow ):
             if minDistSq < minCornerDistancePixels or maxDistSq/minDistSq > maxAspectRatio or maxDistSq/minDistSq < minAspectRatio:
                 continue
             cv2.polylines(frame, rectP, True, (0,255,0), thickness = 2,lineType = 8, shift = 0)
+            contnew.append(rectP)
+        """if len(contnew) == 1:
+            print(contnew[0])
+        elif len(contnew) == 0:
+            print("No object detected")
+        else: print("Too many objects detected")"""
         return frame
     
 
 if __name__=="__main__":
-    gp.setwarnings(False)
+    """gp.setwarnings(False)
     gp.setmode(gp.BOARD)
     gp.setup(7,gp.OUT)
     gp.setup(11,gp.OUT)
-    gp.setup(12,gp.OUT)
+    gp.setup(12,gp.OUT)"""
     
     app = QtWidgets.QApplication(sys.argv)
     gui = CamGui()
