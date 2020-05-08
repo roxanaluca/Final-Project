@@ -21,47 +21,49 @@ from adafruit_servokit import ServoKit
 class MotorDriver():
     def __init__(self):
         i2c = I2C(3)
-        kit = ServoKit(channels=16, i2c=i2c)
-        if kit.servo[1].angle < 0 or kit.servo[1].angle > 180:
-            kit.servo[1].angle = 30
-
+        self.kit = ServoKit(channels=16, i2c=i2c)
+        self.isTracking = False
+    
+    def moveMotor(self,index, angle):
+        if index <1 and index>2:
+            return
+        if self.isTracking == False:
+            return
+        currentangle = self.kit.servo[index].angle
+        if currentangle+angle < 1 or currentangle+angle > 179:
+            return
+        self.kit.servo[index].angle = currentangle + angle
+     
+    def getIsTracking(self):
+         return self.isTracking
+    
+    def setIsTracking(self,value):
+         self.isTracking = value
 
 class Calibration():
     
     def __init__(self):
         self.imgpoints = []
         self.objpoints = []
-        self.isCalibrate = False
-    
-    def calibrate(self,frame):
         
-        criteria = (cv2.TERM_CRITERIA_EPS+ cv2.TERM_CRITERIA_MAX_ITER,5,0.001)
-        
-        gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
-        #cv2.imwrite("frame.jpg",gray)
-        ret, corners = cv2.findChessboardCorners(gray, (9,6), None)             
-        print(ret)
-        if ret == False:
-            return
-        
-        imgp = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1), criteria)
-        objp = np.zeros((6*9,3),np.float32)
-        objp[:,:2] = np.mgrid[0:9,0:6].T.reshape(-1,2)
-        self.imgpoints.append(imgp)
-        self.objpoints.append(objp)
-        ret,mtx,dist,rvecs,tvecs = cv2.calibrateCamera(self.objpoints,self.imgpoints,gray.shape[::-1],None,None)
-        print(mtx)
-        
-        h,w = frame.shape[:2]
-        cameratx, _ = cv2.getOptimalNewCameraMatrix(mtx,dist,(w,h),0,(w,h))
-        self.mapx, self.mapy = cv2.initUndistortRectifyMap(mtx,dist,None, cameratx,(w,h),5)
-        print(cameratx)
-        self.isCalibrate = True
+        matrix = np.loadtxt("camera0.txt",dtype=np.float)
+        self.mtx = matrix[0:3,0:3]
+        self.dist = matrix[3,:]
+        h = 384
+        w = 384
+        self.cameratx, _ = cv2.getOptimalNewCameraMatrix(self.mtx,self.dist,(w,h),0,(w,h))
+        self.mapx, self.mapy = cv2.initUndistortRectifyMap(self.mtx,self.dist,None, self.cameratx,(w,h),5)
 
     def undistort(self,frame):
-        if self.isCalibrate:
-            return cv2.remap(frame,self.mapx,self.mapy,cv2.INTER_LINEAR)
-        return frame
+        return cv2.remap(frame,self.mapx,self.mapy,cv2.INTER_LINEAR)
+    
+    def undistortPoints(self, points):
+        points1 = points[0:4].astype(np.float32)
+        points1 = cv2.undistortPoints(points1,self.mtx,self.dist,None,self.cameratx)
+        return points1
+    
+    def focal(self):
+        return self.cameratx[0][0]
     
 class CamGui( QtWidgets.QMainWindow ):
     
@@ -77,43 +79,42 @@ class CamGui( QtWidgets.QMainWindow ):
             l.mouseMoveEvent = self.on_mouse_move
         self.ui.label_img0.mouseReleaseEvent = self.on_mouse_release_label_img
         self.ui.label_img1.mouseReleaseEvent = self.on_mouse_release_label_img
-        self.count = self.ui.count
+        
+        self.ui.tracking.clicked.connect(self.startEndTracking)
+        self.motorDriver = MotorDriver()
         
         self.camera = Camera()
         self.camera.grabbed_signal.connect(self.update_photo)
         self.camera.start()
         
-        self.ui.calibrate.clicked.connect(self.startCount)
-        self.timer = 0
-        self.iter = 2
         self.calibration = Calibration()
-        self.motorDriver = MotorDriver()
     
-    def startCount(self):
-        self.timer = 5
-        self.iter = 0
+    def startEndTracking(self):
+        trackingValue = self.motorDriver.getIsTracking()
+        if trackingValue:
+            self.ui.tracking.setText("Start Tracking")
+            self.motorDriver.setIsTracking(False)
+        else:
+            self.ui.tracking.setText("Stop Tracking")
+            self.motorDriver.setIsTracking(True)
+    
+    def angle_compute(self,points):
+        points = self.calibration.undistortPoints(points)    
+        pointsCenter = self.calibration.undistortPoints(np.array([[[193,193]]]))
+        centerPoint = (points[0]+points[2])*0.5
+        rightAngle = math.atan2(pointsCenter[0][0][0] - centerPoint[0][0] , self.calibration.focal()) * 180 / math.pi
+        print(str(pointsCenter[0][0][0] - centerPoint[0][0])+" " +str(rightAngle))
+        self.motorDriver.moveMotor(1,rightAngle)
     
     def update_photo(self, index, frame):
-        
-        frame_copy = self.detectSquare(self.calibration.undistort(frame))
+        frame_copy, points = self.detectSquare(self.calibration.undistort(frame))
         f_rgb = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2RGB)
         w,h = f_rgb.shape[:2]
         bytes_per_line = 3 * w
         qimg = QtGui.QImage(f_rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
         self.ui_label_img_list[index].setPixmap(QtGui.QPixmap.fromImage(qimg))
-        
-        if self.timer > 0:
-            if self.iter == 0:
-                self.count.setText(self.timer)
-            self.iter = self.iter + 1
-            if self.iter%50 == 0:
-                self.iter = 0
-                self.timer = self.timer - 1
-        if self.timer == 0 and self.iter < 2:
-            self.count.setText("")
-            print(index)
-            self.calibration.calibrate(frame)
-            self.iter = self.iter + 1
+        if index == 1 and len(points)>0 and self.motorDriver.getIsTracking():
+            self.angle_compute(points)
         
     def on_mouse_release_label_img(self, ev):
         print('why you click me ?!')
@@ -173,12 +174,15 @@ class CamGui( QtWidgets.QMainWindow ):
                 continue
             cv2.polylines(frame, rectP, True, (0,255,0), thickness = 2,lineType = 8, shift = 0)
             contnew.append(rectP)
-        """if len(contnew) == 1:
-            print(contnew[0])
+        if len(contnew) == 1:
+            return frame, contnew[0]
         elif len(contnew) == 0:
-            print("No object detected")
-        else: print("Too many objects detected")"""
-        return frame
+            if self.motorDriver.getIsTracking() == True:
+                print("No object detected")
+        else:
+            if self.motorDriver.getIsTracking() == True: 
+                print("Too many objects detected")
+        return frame, []
     
 
 if __name__=="__main__":
