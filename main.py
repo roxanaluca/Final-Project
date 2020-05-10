@@ -46,25 +46,43 @@ class Calibration():
         self.imgpoints = []
         self.objpoints = []
         
+        h = 384
+        w = 384
+        
         matrix = np.loadtxt("camera0.txt",dtype=np.float)
         self.mtx = matrix[0:3,0:3]
         self.dist = matrix[3,:]
-        h = 384
-        w = 384
+       
         self.cameratx, _ = cv2.getOptimalNewCameraMatrix(self.mtx,self.dist,(w,h),0,(w,h))
         self.mapx, self.mapy = cv2.initUndistortRectifyMap(self.mtx,self.dist,None, self.cameratx,(w,h),5)
+        
+        matrix = np.loadtxt("camera2.txt",dtype=np.float)
+        self.mtx1 = matrix[0:3,0:3]
+        self.dist1 = matrix[3,:]
+       
+        self.cameratx1, _ = cv2.getOptimalNewCameraMatrix(self.mtx1,self.dist1,(w,h),0,(w,h))
+        self.mapx1, self.mapy1 = cv2.initUndistortRectifyMap(self.mtx1,self.dist1,None, self.cameratx1,(w,h),5)
 
-    def undistort(self,frame):
-        return cv2.remap(frame,self.mapx,self.mapy,cv2.INTER_LINEAR)
+    def undistort(self,frame, index):
+        if index == 0:
+            return cv2.remap(frame,self.mapx,self.mapy,cv2.INTER_LINEAR)
+        else:
+            return cv2.remap(frame,self.mapx1,self.mapy1,cv2.INTER_LINEAR)
     
-    def undistortPoints(self, points):
-        points1 = points[0:4].astype(np.float32)
-        points1 = cv2.undistortPoints(points1,self.mtx,self.dist,None,self.cameratx)
+    def undistortPoints(self, points,index):
+        points1 = points.astype(np.float32)
+        if index == 0:
+            points1 = cv2.undistortPoints(points1,self.mtx,self.dist,None,self.cameratx)
+        else:
+            points1 = cv2.undistortPoints(points1,self.mtx1,self.dist1,None,self.cameratx1)
         return points1
     
-    def focal(self):
-        return self.cameratx[0][0]
-    
+    def focal(self,index):
+        if index == 0:
+            return self.cameratx[0][0]
+        else:
+            return self.cameratx1[0][0]
+        
 class CamGui( QtWidgets.QMainWindow ):
     
     def __init__(self, *args):
@@ -88,6 +106,9 @@ class CamGui( QtWidgets.QMainWindow ):
         self.camera.start()
         
         self.calibration = Calibration()
+        self.initBB = [None,None]
+        self.tracker0 = cv2.TrackerMOSSE_create()
+        self.tracker1 = cv2.TrackerMOSSE_create()
     
     def startEndTracking(self):
         trackingValue = self.motorDriver.getIsTracking()
@@ -98,23 +119,46 @@ class CamGui( QtWidgets.QMainWindow ):
             self.ui.tracking.setText("Stop Tracking")
             self.motorDriver.setIsTracking(True)
     
-    def angle_compute(self,points):
-        points = self.calibration.undistortPoints(points)    
-        pointsCenter = self.calibration.undistortPoints(np.array([[[193,193]]]))
-        centerPoint = (points[0]+points[2])*0.5
-        rightAngle = math.atan2(pointsCenter[0][0][0] - centerPoint[0][0] , self.calibration.focal()) * 180 / math.pi
+    def angle_compute(self,points,index):
+        (x,y,w,h) = [int(val) for val in self.initBB[index]]
+        points = self.calibration.undistortPoints(np.array([[[x,y],[x+w,y+h]]]),index)    
+        pointsCenter = self.calibration.undistortPoints(np.array([[[193,193]]]),index)
+        centerPoint = (points[0]+points[1])*0.5
+        rightAngle = math.atan2(pointsCenter[0][0][0] - centerPoint[0][0] , self.calibration.focal(index)) * 180 / math.pi
         print(str(pointsCenter[0][0][0] - centerPoint[0][0])+" " +str(rightAngle))
-        self.motorDriver.moveMotor(1,rightAngle)
+        self.motorDriver.moveMotor(2-index,rightAngle)
     
     def update_photo(self, index, frame):
-        frame_copy, points = self.detectSquare(self.calibration.undistort(frame))
-        f_rgb = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2RGB)
+        frame_undistorted = self.calibration.undistort(frame,index)
+        
+        success = False
+        if self.initBB[index] is not None:
+            if index == 0:
+                (success, self.initBB[0]) = self.tracker0.update(frame_undistorted)
+            else:
+                (success, self.initBB[1]) = self.tracker1.update(frame_undistorted)
+            (x,y,w,h) = [int(val) for val in self.initBB[index]] 
+            self.initBB[index] = (x,y,w,h)
+        
+        if self.initBB[index] is None or success == False:
+            self.initBB[index] = self.detectSquare(frame_undistorted)
+            if self.initBB[index] is not None:
+                if index == 0:
+                    self.tracker0.init(frame_undistorted, self.initBB[0])
+                else:
+                    self.tracker1.init(frame_undistorted, self.initBB[1])
+        
+        if self.initBB[index] is not None:
+            cv2.rectangle(frame_undistorted, self.initBB[index], (0,255,0), thickness = 2,lineType = 8, shift = 0)
+        
+        f_rgb = cv2.cvtColor(frame_undistorted, cv2.COLOR_BGR2RGB)
         w,h = f_rgb.shape[:2]
         bytes_per_line = 3 * w
         qimg = QtGui.QImage(f_rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
         self.ui_label_img_list[index].setPixmap(QtGui.QPixmap.fromImage(qimg))
-        if index == 1 and len(points)>0 and self.motorDriver.getIsTracking():
-            self.angle_compute(points)
+       
+        if self.initBB[index] is not None and self.motorDriver.getIsTracking():
+            self.angle_compute(self.initBB[index],index)
         
     def on_mouse_release_label_img(self, ev):
         print('why you click me ?!')
@@ -172,17 +216,16 @@ class CamGui( QtWidgets.QMainWindow ):
             minCornerDistancePixels = math.pow(cv2.arcLength(rectP,True)*minCornerDistanceRate,2)
             if minDistSq < minCornerDistancePixels or maxDistSq/minDistSq > maxAspectRatio or maxDistSq/minDistSq < minAspectRatio:
                 continue
-            cv2.polylines(frame, rectP, True, (0,255,0), thickness = 2,lineType = 8, shift = 0)
-            contnew.append(rectP)
+            contnew.append(cv2.boundingRect(rectP))
         if len(contnew) == 1:
-            return frame, contnew[0]
+            return contnew[0]
         elif len(contnew) == 0:
             if self.motorDriver.getIsTracking() == True:
                 print("No object detected")
         else:
             if self.motorDriver.getIsTracking() == True: 
                 print("Too many objects detected")
-        return frame, []
+        return None
     
 
 if __name__=="__main__":
