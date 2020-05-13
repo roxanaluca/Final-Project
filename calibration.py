@@ -8,6 +8,7 @@ import copy
 import time
 import math
 import sys
+import os
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5 import uic
@@ -39,13 +40,14 @@ class Calibration():
         self.objpoints.append(objp)
         ret,self.mtx,self.dist,rvecs,tvecs = cv2.calibrateCamera(self.objpoints,self.imgpoints,gray.shape[::-1],None,None)
         
-        data = self.mtx
-        data=np.append(data,np.zeros((3,len(self.dist[0])-3),dtype=np.float), axis=1)
-        data=np.append(data,self.dist, axis = 0)
-        print(data)
-        np.savetxt("camera"+str(INDEX)+".txt",data,fmt="%f")
-        
         h,w = frame.shape[:2]
+        cv_file = cv2.FileStorage(os.path.join(os.path.dirname(__file__),"camera"+str(INDEX)+".yaml"), cv2.FILE_STORAGE_WRITE)
+        cv_file.write('image_width',h)
+        cv_file.write('image_height',w)
+        cv_file.write('camera_matrix',self.mtx)
+        cv_file.write('distortion_coefficients',self.dist)
+        cv_file.release()
+        
         self.cameratx, _ = cv2.getOptimalNewCameraMatrix(self.mtx,self.dist,(w,h),0,(w,h))
         self.mapx, self.mapy = cv2.initUndistortRectifyMap(self.mtx,self.dist,None, self.cameratx,(w,h),5)
         self.isCalibrate = True
@@ -112,7 +114,7 @@ class CamGui( QtWidgets.QMainWindow ):
 
 if __name__=="__main__":
     
-    INDEX = 0
+    INDEX = 2
     app = QtWidgets.QApplication(sys.argv)
     gui = CamGui()
     gui.show()

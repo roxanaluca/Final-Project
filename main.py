@@ -8,6 +8,8 @@ import copy
 import time
 import math
 import sys
+import aruco
+import os
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5 import uic
@@ -40,49 +42,68 @@ class MotorDriver():
     def setIsTracking(self,value):
          self.isTracking = value
 
+class CameraParameters():
+    
+    def __init__(self):
+        self.camm = aruco.CameraParameters()
+        self.mtx = None
+        self.dist = None
+        self.h = None
+        self.w = None
+        self.cameratx = None
+        self.mapx = None
+        self.mapy = None
+
+    def computeOptimalMatrix(self):
+        self.cameratx, _ = cv2.getOptimalNewCameraMatrix(self.mtx,self.dist,(self.h,self.w),0,(self.h,self.w))
+        self.mapx, self.mapy = cv2.initUndistortRectifyMap(self.mtx,self.dist,None, self.cameratx,(self.h,self.w),5)
+    
+    def getFromFile(self,file_path):
+        self.camm.readFromXMLFile(file_path)
+        cv_file = cv2.FileStorage(file_path,cv2.FILE_STORAGE_READ)
+        self.h = int(cv_file.getNode("image_width").real())
+        self.w = int(cv_file.getNode("image_height").real())
+        self.mtx = np.array(cv_file.getNode("camera_matrix").mat())
+        self.dist = np.array(cv_file.getNode("distortion_coefficients").mat())
+
 class Calibration():
     
     def __init__(self):
         self.imgpoints = []
         self.objpoints = []
         
-        h = 384
-        w = 384
+        self.camera =[None,None]
+        self.camera[0] = CameraParameters()
+        self.camera[1] = CameraParameters()
         
-        matrix = np.loadtxt("camera0.txt",dtype=np.float)
-        self.mtx = matrix[0:3,0:3]
-        self.dist = matrix[3,:]
-       
-        self.cameratx, _ = cv2.getOptimalNewCameraMatrix(self.mtx,self.dist,(w,h),0,(w,h))
-        self.mapx, self.mapy = cv2.initUndistortRectifyMap(self.mtx,self.dist,None, self.cameratx,(w,h),5)
+        self.camera[0].getFromFile(os.path.join(os.path.dirname(__file__),"camera0.yaml"))
+        self.camera[1].getFromFile(os.path.join(os.path.dirname(__file__),"camera2.yaml"))
         
-        matrix = np.loadtxt("camera2.txt",dtype=np.float)
-        self.mtx1 = matrix[0:3,0:3]
-        self.dist1 = matrix[3,:]
-       
-        self.cameratx1, _ = cv2.getOptimalNewCameraMatrix(self.mtx1,self.dist1,(w,h),0,(w,h))
-        self.mapx1, self.mapy1 = cv2.initUndistortRectifyMap(self.mtx1,self.dist1,None, self.cameratx1,(w,h),5)
-
+        self.camera[0].computeOptimalMatrix()
+        self.camera[1].computeOptimalMatrix()
+        
     def undistort(self,frame, index):
-        if index == 0:
-            return cv2.remap(frame,self.mapx,self.mapy,cv2.INTER_LINEAR)
-        else:
-            return cv2.remap(frame,self.mapx1,self.mapy1,cv2.INTER_LINEAR)
-    
+        return cv2.remap(frame,self.camera[index].mapx,self.camera[index].mapy,cv2.INTER_LINEAR)
+                
     def undistortPoints(self, points,index):
-        points1 = points.astype(np.float32)
-        if index == 0:
-            points1 = cv2.undistortPoints(points1,self.mtx,self.dist,None,self.cameratx)
-        else:
-            points1 = cv2.undistortPoints(points1,self.mtx1,self.dist1,None,self.cameratx1)
+        rtemp = ttemp = np.array([0,0,0],dtype = 'float32')
+        pointsout = cv2.undistortPoints(points,self.camera[index].cameratx,None)
+        pointstemp = cv2.convertPointsToHomogeneous(pointsout)
+        points1, _ = cv2.projectPoints(pointstemp,rtemp,ttemp,self.camera[index].mtx,self.camera[index].dist,pointsout)
         return points1
     
     def focal(self,index):
-        if index == 0:
-            return self.cameratx[0][0]
-        else:
-            return self.cameratx1[0][0]
+        return self.camera[index].cameratx[0][0]
         
+    def cameraMatrixTI(self,index):
+        return np.linalg.inv(self.camera[index].cameratx.T).dot(np.linalg.inv(self.camera[index].cameratx))
+           
+    def cameraParameters(self,index):
+        return self.camera[index].camm
+    
+    def cameraMatrixI(self,index):
+        return np.linalg.inv(self.camera[index].cameratx)
+    
 class CamGui( QtWidgets.QMainWindow ):
     
     def __init__(self, *args):
@@ -107,8 +128,9 @@ class CamGui( QtWidgets.QMainWindow ):
         
         self.calibration = Calibration()
         self.initBB = [None,None]
-        self.tracker0 = cv2.TrackerMOSSE_create()
-        self.tracker1 = cv2.TrackerMOSSE_create()
+        self.angles = [None,None]
+        self.detector = aruco.MarkerDetector()
+        
     
     def startEndTracking(self):
         trackingValue = self.motorDriver.getIsTracking()
@@ -119,37 +141,61 @@ class CamGui( QtWidgets.QMainWindow ):
             self.ui.tracking.setText("Stop Tracking")
             self.motorDriver.setIsTracking(True)
     
+    def angle_compute_version_1(self,x,y,index):
+        centerpoint = self.calibration.undistortPoints(np.array([[192,192]],dtype="float32"),index)
+        angle = math.atan2(centerpoint[0][0][0] - x, 2*self.calibration.focal(index)) * 180 / math.pi
+        return angle
+        
+    def angle_compute_version_2(self,x,y,index):
+        mm = self.calibration.cameraMatrixTI(index)
+        x1 = np.array([x,192,1])
+        x2 = np.array([192,192,1])
+        
+        d1 = x1.T.dot(mm.dot(x2))
+        d2 = x1.T.dot(mm.dot(x1))
+        d3 = x2.T.dot(mm.dot(x2))
+        
+        angle = math.acos(d1/math.sqrt(d2*d3))*90/math.pi
+        if x > 192:
+            angle = angle*(-1)
+        return angle
+    
+    def angle_compute_version_3(self,x,y,index):
+        KImat = self.calibration.cameraMatrixI(index)
+        worldcoord = KImat.dot(np.array([x,y,1],dtype="float32").T)
+        print(worldcoord)
+        XZ = worldcoord[0]/worldcoord[2]
+        angle = math.acos(1.0/math.sqrt(1.0+XZ*XZ)) * 90 / math.pi
+        if XZ > 0:
+            angle = angle*(-1)
+        return angle
+    
     def angle_compute(self,points,index):
-        (x,y,w,h) = [int(val) for val in self.initBB[index]]
-        points = self.calibration.undistortPoints(np.array([[[x,y],[x+w,y+h]]]),index)    
-        pointsCenter = self.calibration.undistortPoints(np.array([[[193,193]]]),index)
-        centerPoint = (points[0]+points[1])*0.5
-        rightAngle = math.atan2(pointsCenter[0][0][0] - centerPoint[0][0] , self.calibration.focal(index)) * 180 / math.pi
-        print(str(pointsCenter[0][0][0] - centerPoint[0][0])+" " +str(rightAngle))
-        self.motorDriver.moveMotor(2-index,rightAngle)
+        (x,y) = [int(val) for val in self.initBB[index]]
+        angle1 = self.angle_compute_version_1(x,y,index)
+        angle2 = self.angle_compute_version_2(x,y,index)
+        angle3 = self.angle_compute_version_3(x,y,index)
+       
+        print(str(angle1)+" "+str(angle2)+" "+str(angle3))
+        self.motorDriver.moveMotor(2-index,angle2)
+        self.angles[index] = angle2
     
     def update_photo(self, index, frame):
         frame_undistorted = self.calibration.undistort(frame,index)
-        
-        success = False
-        if self.initBB[index] is not None:
-            if index == 0:
-                (success, self.initBB[0]) = self.tracker0.update(frame_undistorted)
-            else:
-                (success, self.initBB[1]) = self.tracker1.update(frame_undistorted)
-            (x,y,w,h) = [int(val) for val in self.initBB[index]] 
-            self.initBB[index] = (x,y,w,h)
-        
-        if self.initBB[index] is None or success == False:
-            self.initBB[index] = self.detectSquare(frame_undistorted)
-            if self.initBB[index] is not None:
-                if index == 0:
-                    self.tracker0.init(frame_undistorted, self.initBB[0])
-                else:
-                    self.tracker1.init(frame_undistorted, self.initBB[1])
-        
-        if self.initBB[index] is not None:
-            cv2.rectangle(frame_undistorted, self.initBB[index], (0,255,0), thickness = 2,lineType = 8, shift = 0)
+        markers = self.detector.detect(frame, self.calibration.cameraParameters(index), False)
+        if self.motorDriver.getIsTracking():
+            if len(markers) == 0: 
+                print("There is no marker")
+            elif len(markers) > 1:
+                print("There are many markers")
+        for marker in markers:
+            marker.draw(frame_undistorted,np.array([255,255,255]),2)
+        if len(markers)==1:
+            self.initBB[index] = markers[0].getCenter()
+            x,y = self.initBB[index]
+            cv2.circle(frame_undistorted,(x,y),1,(255,0,0),2)
+        else:
+            self.initBB[index] = None
         
         f_rgb = cv2.cvtColor(frame_undistorted, cv2.COLOR_BGR2RGB)
         w,h = f_rgb.shape[:2]
@@ -165,67 +211,6 @@ class CamGui( QtWidgets.QMainWindow ):
 
     def on_mouse_move(self, e):
         pass
-    
-    def detectSquare(self,frame):    
-    
-        median = cv2.GaussianBlur(frame,(5,5),0)
-        hsv = cv2.cvtColor(median, cv2.COLOR_BGR2HSV)
-        sensitivityWhite = 100
-        sensitivityBlack = 100
-        lower_white = np.array([0,0,255-sensitivityWhite], np.uint8)
-        upper_white = np.array([255,sensitivityWhite,255], np.uint8)
-        mask_white = cv2.inRange(hsv, lower_white, upper_white)
-        lower_black = np.array([0,0,0], np.uint8)
-        upper_black = np.array([255,255,sensitivityBlack], np.uint8)
-        mask_black = cv2.inRange(hsv, lower_black, upper_black)
-        mask =  cv2.addWeighted(mask_white,0.3,cv2.bitwise_not(mask_black),0.7,0)
-        _, im_bw = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY)
-
-        cont = []
-        contnew = []
-        cont,_ = cv2.findContours(image = im_bw, mode = cv2.RETR_LIST, method = cv2.CHAIN_APPROX_SIMPLE,contours = cont)
-        accuracyRate = 0.03
-        cols = 5
-        rows = 5
-
-        minPerimeterRate = 0.037
-        maxPerimeterRate = 4
-
-        minPerimeterPixels = minPerimeterRate * max(cols, rows) * 1000
-        maxPerimeterPixels = maxPerimeterRate * max(cols, rows) * 1000
-        minCornerDistanceRate = 0.05
-        
-        minAspectRatio = 1.0
-        maxAspectRatio = 1.25
-
-        for i in range(0,len(cont) - 1):
-            rectP = cv2.approxPolyDP(cont[i], cv2.arcLength(cont[i],True) * accuracyRate, True)
-            if len(rectP) != 4 or (not cv2.isContourConvex(rectP)):
-                continue
-
-            if minPerimeterPixels > cv2.arcLength(rectP,True) or maxPerimeterPixels < cv2.arcLength(rectP,True):
-                 continue
-
-            frame_rows,frame_cols = frame.shape[:2]
-            minDistSq = math.pow(max(frame_rows,frame_cols),2)
-            maxDistSq = 0
-            for j in range(4):
-                d = math.pow(rectP[j][0][0] - rectP[(j+1)%4][0][0],2) + math.pow(rectP[j][0][1] - rectP[(j+1)%4][0][1],2)
-                minDistSq = min(minDistSq,d)
-                maxDistSq = max(maxDistSq,d)
-            minCornerDistancePixels = math.pow(cv2.arcLength(rectP,True)*minCornerDistanceRate,2)
-            if minDistSq < minCornerDistancePixels or maxDistSq/minDistSq > maxAspectRatio or maxDistSq/minDistSq < minAspectRatio:
-                continue
-            contnew.append(cv2.boundingRect(rectP))
-        if len(contnew) == 1:
-            return contnew[0]
-        elif len(contnew) == 0:
-            if self.motorDriver.getIsTracking() == True:
-                print("No object detected")
-        else:
-            if self.motorDriver.getIsTracking() == True: 
-                print("Too many objects detected")
-        return None
     
 
 if __name__=="__main__":

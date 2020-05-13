@@ -96,7 +96,7 @@ class Camera(QtCore.QThread):
       self.vc = cv2.VideoCapture(0)
       self.vc.set(cv2.CAP_PROP_FRAME_HEIGHT,384)
       self.vc.set(cv2.CAP_PROP_FRAME_WIDTH,384)
-      self.vc.set(cv2.CAP_PROP_FPS, 30)
+      self.vc.set(cv2.CAP_PROP_FPS, 28)
       self.pin7 = digitalio.DigitalInOut(board.D4)
       self.pin7.direction = digitalio.Direction.OUTPUT
       self.pin11 = digitalio.DigitalInOut(board.D17)
