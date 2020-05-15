@@ -41,6 +41,11 @@ class MotorDriver():
     
     def setIsTracking(self,value):
          self.isTracking = value
+    
+    def getAngleMotor(self,index):
+        if index <1 and index > 2:
+            return None
+        return self.kit.servo[index].angle
 
 class CameraParameters():
     
@@ -92,17 +97,29 @@ class Calibration():
         points1, _ = cv2.projectPoints(pointstemp,rtemp,ttemp,self.camera[index].mtx,self.camera[index].dist,pointsout)
         return points1
     
-    def focal(self,index):
-        return self.camera[index].cameratx[0][0]
+    def focalX(self,index):
+        return self.camera[index].mtx[0][0]
+    
+    def focalY(self,index):
+        return self.camera[index].mtx[1][1]
+    
+    def centerX(self,index):
+        return self.camera[index].mtx[0][2]
+    
+    def centerY(self,index):
+        return self.camera[index].mtx[1][2]
         
-    def cameraMatrixTI(self,index):
-        return np.linalg.inv(self.camera[index].cameratx.T).dot(np.linalg.inv(self.camera[index].cameratx))
+    def cameraMatrixTIdotI(self,index):
+        return np.linalg.inv(self.camera[index].mtx.T).dot(np.linalg.inv(self.camera[index].mtx))
            
     def cameraParameters(self,index):
         return self.camera[index].camm
     
     def cameraMatrixI(self,index):
-        return np.linalg.inv(self.camera[index].cameratx)
+        return np.linalg.inv(self.camera[index].mtx)
+    
+    def movieDimension(self):
+        return (self.camera[0].w+self.camera[1].w,self.camera[0].h)
     
 class CamGui( QtWidgets.QMainWindow ):
     
@@ -131,6 +148,20 @@ class CamGui( QtWidgets.QMainWindow ):
         self.angles = [None,None]
         self.detector = aruco.MarkerDetector()
         
+        self.isRecording = False
+        self.ui.recording.clicked.connect(self.startEndRecording)
+        
+    def startEndRecording(self):
+        if self.isRecording:
+            self.video.release()
+            self.ui.recording.setText("Start Recording")
+            self.isRecording = False
+        else:
+            self.ui.recording.setText("Stop Recording")
+            self.video = cv2.VideoWriter('video.avi',0,14,self.calibration.movieDimension())
+            self.previousImage = None
+            self.isRecording = True
+        
     
     def startEndTracking(self):
         trackingValue = self.motorDriver.getIsTracking()
@@ -142,43 +173,67 @@ class CamGui( QtWidgets.QMainWindow ):
             self.motorDriver.setIsTracking(True)
     
     def angle_compute_version_1(self,x,y,index):
-        centerpoint = self.calibration.undistortPoints(np.array([[192,192]],dtype="float32"),index)
-        angle = math.atan2(centerpoint[0][0][0] - x, 2*self.calibration.focal(index)) * 180 / math.pi
-        return angle
+        centerpoint = self.calibration.undistortPoints(np.array([[[192,192]]],dtype=np.float64),index)
+        angleRL = math.atan2(centerpoint[0][0][0] - x, self.calibration.focalX(index)) * 90 / math.pi
+        angleUD = math.atan2(centerpoint[0][0][1] - y, self.calibration.focalY(index)) * 90 / math.pi
+        return angleRL,angleUD
         
     def angle_compute_version_2(self,x,y,index):
-        mm = self.calibration.cameraMatrixTI(index)
-        x1 = np.array([x,192,1])
-        x2 = np.array([192,192,1])
+        mm = self.calibration.cameraMatrixTIdotI(index)
+        centerpoint = self.calibration.undistortPoints(np.array([[[192,192]]],dtype=np.float64),index)
+        x1 = np.array([x,centerpoint[0][0][1],1])
+        x2 = np.array([centerpoint[0][0][0],centerpoint[0][0][1],1])
         
         d1 = x1.T.dot(mm.dot(x2))
         d2 = x1.T.dot(mm.dot(x1))
         d3 = x2.T.dot(mm.dot(x2))
         
-        angle = math.acos(d1/math.sqrt(d2*d3))*90/math.pi
+        angleRL = math.acos(d1/math.sqrt(d2*d3))*90/math.pi
         if x > 192:
-            angle = angle*(-1)
-        return angle
+            angleRL = angleRL*(-1)
+        
+        y1 = np.array([centerpoint[0][0][0],y,1])
+        y2 = np.array([centerpoint[0][0][0],centerpoint[0][0][1],1])
+
+        d1 = y1.T.dot(mm.dot(y2))
+        d2 = y1.T.dot(mm.dot(y1))
+        d3 = y2.T.dot(mm.dot(y2))
+        
+        angleUD = math.acos(d1/math.sqrt(d2*d3))*90/math.pi
+        if y > 192:
+            angleUD = angleUD*(-1)
+        return angleRL,angleUD
     
     def angle_compute_version_3(self,x,y,index):
         KImat = self.calibration.cameraMatrixI(index)
-        worldcoord = KImat.dot(np.array([x,y,1],dtype="float32").T)
-        print(worldcoord)
+        worldcoord = np.zeros(3,dtype = np.longdouble)
+        worldcoord[0] = KImat[0][0]*float(x) + KImat[0][2]
+        worldcoord[1] = KImat[1][1]*float(y) + KImat[1][2]
+        worldcoord[2] = KImat[2][2]
+        
         XZ = worldcoord[0]/worldcoord[2]
-        angle = math.acos(1.0/math.sqrt(1.0+XZ*XZ)) * 90 / math.pi
+        YZ = worldcoord[1]/worldcoord[2]
+        
+        angleRL = math.acos(1.0/math.sqrt(1.0+XZ*XZ)) * 90 / math.pi
         if XZ > 0:
-            angle = angle*(-1)
-        return angle
+            angleRL = angleRL*(-1)
+        
+        angleUD = math.acos(1.0/math.sqrt(1.0+YZ*YZ)) * 90 / math.pi
+        if YZ > 0:
+            angleUD = angleUD*(-1)
+        
+        return angleRL,angleUD
     
     def angle_compute(self,points,index):
         (x,y) = [int(val) for val in self.initBB[index]]
-        angle1 = self.angle_compute_version_1(x,y,index)
-        angle2 = self.angle_compute_version_2(x,y,index)
-        angle3 = self.angle_compute_version_3(x,y,index)
+        angle1RL,angle1UD = self.angle_compute_version_1(x,y,index)
+        angle2RL,angle2UD = self.angle_compute_version_2(x,y,index)
+        angle3RL,angle3UD = self.angle_compute_version_3(x,y,index)
        
-        print(str(angle1)+" "+str(angle2)+" "+str(angle3))
-        self.motorDriver.moveMotor(2-index,angle2)
-        self.angles[index] = angle2
+        print("RL" + str(angle1RL)+" "+str(angle2RL)+" "+str(angle3RL))
+        print("UD" + str(angle1UD)+" "+str(angle2UD)+" "+str(angle3UD))
+        self.motorDriver.moveMotor(2-index,angle3RL)
+        self.angles[index] = angle3RL
     
     def update_photo(self, index, frame):
         frame_undistorted = self.calibration.undistort(frame,index)
@@ -192,8 +247,6 @@ class CamGui( QtWidgets.QMainWindow ):
             marker.draw(frame_undistorted,np.array([255,255,255]),2)
         if len(markers)==1:
             self.initBB[index] = markers[0].getCenter()
-            x,y = self.initBB[index]
-            cv2.circle(frame_undistorted,(x,y),1,(255,0,0),2)
         else:
             self.initBB[index] = None
         
@@ -205,14 +258,19 @@ class CamGui( QtWidgets.QMainWindow ):
        
         if self.initBB[index] is not None and self.motorDriver.getIsTracking():
             self.angle_compute(self.initBB[index],index)
-        
+        if self.isRecording:
+            if self.previousImage is None:
+                self.previousImage = frame_undistorted
+            else:
+                self.video.write(np.concatenate((frame_undistorted,self.previousImage),axis =1))
+                self.previousImage = None
+
     def on_mouse_release_label_img(self, ev):
         print('why you click me ?!')
 
     def on_mouse_move(self, e):
         pass
     
-
 if __name__=="__main__":
     """gp.setwarnings(False)
     gp.setmode(gp.BOARD)
@@ -224,3 +282,5 @@ if __name__=="__main__":
     gui = CamGui()
     gui.show()
     sys.exit(app.exec_())
+    if gui.isRecording:
+        gui.video.release()

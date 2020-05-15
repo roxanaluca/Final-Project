@@ -114,7 +114,7 @@ class CamGui( QtWidgets.QMainWindow ):
 
 if __name__=="__main__":
     
-    INDEX = 2
+    INDEX = 0
     app = QtWidgets.QApplication(sys.argv)
     gui = CamGui()
     gui.show()
