@@ -13,7 +13,7 @@ import os
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5 import uic
 with open('gui_ui_calib.py', 'w') as fd:
-    uic.compileUi('gui/gui_calib.ui', fd)
+    uic.compileUi('../gui/gui_calib.ui', fd)
 import gui_ui_calib as gui_ui
 
 class Calibration():

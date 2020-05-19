@@ -81,8 +81,8 @@ class Calibration():
         self.camera[0] = CameraParameters()
         self.camera[1] = CameraParameters()
         
-        self.camera[0].getFromFile(os.path.join(os.path.dirname(__file__),"camera0.yaml"))
-        self.camera[1].getFromFile(os.path.join(os.path.dirname(__file__),"camera2.yaml"))
+        self.camera[0].getFromFile(os.path.join(os.path.dirname(__file__),"calibration/camera0.yaml"))
+        self.camera[1].getFromFile(os.path.join(os.path.dirname(__file__),"calibration/camera2.yaml"))
         
         self.camera[0].computeOptimalMatrix()
         self.camera[1].computeOptimalMatrix()
