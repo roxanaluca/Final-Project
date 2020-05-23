@@ -56,40 +56,6 @@ class Camera(QtCore.QThread):
           gp.output(11, True)
           gp.output(12, False)"""
       rval, frame = self.vc.read()
-      time.sleep(1)
-          
-   def changeCamera(self,id):
-      if self.cameraid == id:
-          return
-      if id == 0:
-          self.pin7.value = False
-          self.pin11.value = False
-          self.pin12.value = True
-          """gp.output(7, False)
-          gp.output(11, False)
-          gp.output(12, True)"""
-      elif id == 1:
-          self.pin7.value = True
-          self.pin11.value = False
-          self.pin12.value = True
-          """gp.output(7, True)
-          gp.output(11, False)
-          gp.output(12, True)"""
-      elif id == 2:
-          self.pin7.value = False
-          self.pin11.value = True
-          self.pin12.value = False
-          """gp.output(7, False)
-          gp.output(11, True)
-          gp.output(12, False)"""
-      elif id == 3:
-          self.pin7.value = True
-          self.pin11.value = True
-          self.pin12.value = False
-          """gp.output(7, True)
-          gp.output(11, True)
-          gp.output(12, False)"""
-      self.cameraid = id
 
    def __init__(self,cameraId):
       super(Camera, self).__init__()

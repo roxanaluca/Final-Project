@@ -3,7 +3,6 @@
 import cv2
 from camera import Camera
 import numpy as np
-import RPi.GPIO as gp
 import copy
 import time
 import math
