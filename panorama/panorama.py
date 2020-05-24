@@ -57,7 +57,7 @@ def panorama_processing(index, frames):
     result = None
     (keypoints1, feature1) = trainAndIdentify(index,frames[1])
     matches = bf.match(feature,feature1)
-    H = findCorrectHomography(matches, keypoints,keypoints1,0.5)
+    H = findCorrectHomography(matches, keypoints,keypoints1,0.4)
     if H is None:
         return None
     width = frames[0].shape[1]+frames[1].shape[1]
@@ -80,7 +80,7 @@ if __name__=="__main__":
     motorDriver.moveMotor(1,30)
     frame2 = take_picture(camera,2)
     
-    pan = panorama_processing(2,[frame1,frame2])
+    pan = panorama_processing(3,[frame1,frame2])
     if pan is not None:
         cv2.imwrite("panorama.jpg",pan)
     
