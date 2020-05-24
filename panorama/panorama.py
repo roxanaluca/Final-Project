@@ -22,9 +22,9 @@ class MotorDriver():
 def trainAndIdentify(index,image):
     desc = None
     if index == 0:
-        desc = cv2.xfeature2d.SIFT_create()
+        desc = cv2.xfeatures2d.SIFT_create()
     elif index == 1:
-        desc = cv2.xfeature2d.SURF_create()
+        desc = cv2.xfeatures2d.SURF_create()
     elif index == 2:
         desc = cv2.BRISK_create()
     else:
